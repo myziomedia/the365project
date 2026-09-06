@@ -436,6 +436,18 @@
     };
   }
 
+  async function publishPayload() {
+    const compactPhotos = [];
+    for (let i = 0; i < TOTAL; i++) {
+      compactPhotos[i] = photos[i] ? await compactDataURL(photos[i]) : null;
+    }
+    return {
+      version: 1,
+      updatedAt: new Date().toISOString(),
+      photos: compactPhotos
+    };
+  }
+
   async function saveNow() {
     if (!db) return;
     clearTimeout(saveTimer);
@@ -501,6 +513,7 @@
   }
 
   function fileToOptimizedDataURL(file, maxSize = 520, quality = 0.78) {
+  function optimizeImageSource(src, maxSize = 420, quality = 0.72) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onerror = () => reject(reader.error);
@@ -513,18 +526,51 @@
           const scale = Math.min(1, maxSize / Math.max(w, h));
           w = Math.max(1, Math.round(w * scale));
           h = Math.max(1, Math.round(h * scale));
+      const img = new Image();
+      img.onerror = () => reject(new Error('Could not read image'));
+      img.onload = () => {
+        let w = img.naturalWidth;
+        let h = img.naturalHeight;
+        const scale = Math.min(1, maxSize / Math.max(w, h));
+        w = Math.max(1, Math.round(w * scale));
+        h = Math.max(1, Math.round(h * scale));
 
           const canvas = document.createElement('canvas');
           canvas.width = w;
           canvas.height = h;
           const ctx = canvas.getContext('2d');
           ctx.drawImage(img, 0, 0, w, h);
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, w, h);
+        resolve(canvas.toDataURL('image/jpeg', quality));
+      };
+      img.src = src;
+    });
+  }
 
           const type = file.type === 'image/png' ? 'image/png' : 'image/jpeg';
           const result = type === 'image/png' ? canvas.toDataURL(type) : canvas.toDataURL(type, quality);
           resolve(result);
         };
         img.src = reader.result;
+  function compactDataURL(src) {
+    if (!src || !src.startsWith('data:image/')) return Promise.resolve(src);
+    return optimizeImageSource(src, 420, 0.72);
+  }
+
+  function fileToOptimizedDataURL(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(reader.error);
+      reader.onload = async () => {
+        try {
+          resolve(await optimizeImageSource(reader.result, 520, 0.78));
+        } catch (err) {
+          reject(err);
+        }
       };
       reader.readAsDataURL(file);
     });
@@ -622,6 +668,7 @@
       return 'GitHub has a newer copy of grid-data.json. Click Publish Now again; the editor will refresh the file version and retry.';
     }
     return 'GitHub rejected the update. The data may be too large, or the branch/file state changed.';
+    return `GitHub rejected the update: ${message}`;
   }
 
   async function getCurrentSha() {
@@ -672,7 +719,9 @@
     setPublishError('');
 
     try {
+      setSaveState('Preparing smaller website data...', 'saving');
       const content = JSON.stringify(payload(), null, 2);
+      const content = JSON.stringify(await publishPayload(), null, 2);
       try {
         await putGridData(content);
       } catch (err) {
