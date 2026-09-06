@@ -79,6 +79,18 @@
     .save-dot.saving { background: var(--warning); }
     .save-dot.error { background: var(--danger); }
 
+    .publish-error {
+      display: none;
+      max-width: 760px;
+      margin-top: 8px;
+      color: var(--danger);
+      font-size: 12px;
+      line-height: 1.35;
+      overflow-wrap: anywhere;
+    }
+
+    .publish-error.visible { display: block; }
+
     .actions {
       display: flex;
       gap: 8px;
@@ -289,6 +301,7 @@
         <span id="saveDot" class="save-dot"></span>
         <span id="saveText">Loading saved grid...</span>
       </div>
+      <div id="publishError" class="publish-error" role="status"></div>
     </div>
 
     <div class="actions">
@@ -360,6 +373,7 @@
   const saveSettingsBtn = document.getElementById('saveSettingsBtn');
   const saveDot = document.getElementById('saveDot');
   const saveText = document.getElementById('saveText');
+  const publishError = document.getElementById('publishError');
   const ghOwner = document.getElementById('ghOwner');
   const ghRepo = document.getElementById('ghRepo');
   const ghBranch = document.getElementById('ghBranch');
@@ -377,6 +391,11 @@
   function setSaveState(text, state = '') {
     saveText.textContent = text;
     saveDot.className = 'save-dot' + (state ? ' ' + state : '');
+  }
+
+  function setPublishError(text = '') {
+    publishError.textContent = text;
+    publishError.classList.toggle('visible', Boolean(text));
   }
 
   function openDB() {
@@ -577,7 +596,23 @@
 
     if (!res.ok) {
       const text = await res.text();
-      throw new Error(`GitHub request failed (${res.status}): ${text}`);
+      let message = text;
+      try {
+        const parsed = JSON.parse(text);
+        message = parsed.message || text;
+      } catch (_) {}
+
+      if (res.status === 401) {
+        message = 'GitHub says the token is invalid or expired. Make a new fine-grained token and paste it into Publishing Settings.';
+      } else if (res.status === 403) {
+        message = 'GitHub says the token does not have permission. The token needs Contents: Read and write for this repository.';
+      } else if (res.status === 404) {
+        message = 'GitHub could not find that owner/repository/branch, or the token cannot access it. Check spelling and token repository access.';
+      } else if (res.status === 422) {
+        message = 'GitHub rejected the update. The data may be too large, or the branch/file state changed. Try fewer/smaller photos and click Publish Now again.';
+      }
+
+      throw new Error(message);
     }
     return res.json();
   }
@@ -597,6 +632,7 @@
   async function publishNow() {
     if (!hasPublishSettings()) {
       setSaveState('Add GitHub publishing settings to publish online.', 'error');
+      setPublishError('Open Publishing Settings and fill in owner, repository, branch, and token.');
       return;
     }
 
@@ -608,6 +644,7 @@
     publishing = true;
     pendingPublish = false;
     setSaveState('Publishing to website...', 'saving');
+    setPublishError('');
 
     try {
       const s = settings();
@@ -631,6 +668,7 @@
     } catch (err) {
       console.error(err);
       setSaveState('Saved locally. Online publish failed.', 'error');
+      setPublishError(err.message || 'Unknown publish error.');
     } finally {
       publishing = false;
       if (pendingPublish) publishNow();
