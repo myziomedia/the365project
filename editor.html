@@ -608,13 +608,20 @@
         message = 'GitHub says the token does not have permission. The token needs Contents: Read and write for this repository.';
       } else if (res.status === 404) {
         message = 'GitHub could not find that owner/repository/branch, or the token cannot access it. Check spelling and token repository access.';
-      } else if (res.status === 422) {
-        message = 'GitHub rejected the update. The data may be too large, or the branch/file state changed. Try fewer/smaller photos and click Publish Now again.';
+      } else if (res.status === 409 || res.status === 422) {
+        message = parsedMessageForConflict(message);
       }
 
       throw new Error(message);
     }
     return res.json();
+  }
+
+  function parsedMessageForConflict(message) {
+    if (String(message).toLowerCase().includes('sha')) {
+      return 'GitHub has a newer copy of grid-data.json. Click Publish Now again; the editor will refresh the file version and retry.';
+    }
+    return 'GitHub rejected the update. The data may be too large, or the branch/file state changed.';
   }
 
   async function getCurrentSha() {
@@ -627,6 +634,24 @@
       if (String(err.message).includes('(404)')) return null;
       throw err;
     }
+  }
+
+  async function putGridData(content) {
+    const s = settings();
+    const sha = await getCurrentSha();
+    const body = {
+      message: 'Update photo grid',
+      content: encodeBase64Unicode(content),
+      branch: s.branch
+    };
+    if (sha) body.sha = sha;
+
+    const url = `https://api.github.com/repos/${encodeURIComponent(s.owner)}/${encodeURIComponent(s.repo)}/contents/${DATA_PATH}`;
+    return githubRequest(url, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
   }
 
   async function publishNow() {
@@ -647,22 +672,14 @@
     setPublishError('');
 
     try {
-      const s = settings();
       const content = JSON.stringify(payload(), null, 2);
-      const sha = await getCurrentSha();
-      const body = {
-        message: 'Update photo grid',
-        content: encodeBase64Unicode(content),
-        branch: s.branch
-      };
-      if (sha) body.sha = sha;
-
-      const url = `https://api.github.com/repos/${encodeURIComponent(s.owner)}/${encodeURIComponent(s.repo)}/contents/${DATA_PATH}`;
-      await githubRequest(url, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
-      });
+      try {
+        await putGridData(content);
+      } catch (err) {
+        if (!String(err.message).toLowerCase().includes('sha')) throw err;
+        setSaveState('Refreshing GitHub file version...', 'saving');
+        await putGridData(content);
+      }
 
       setSaveState('Saved locally and published online', 'saved');
     } catch (err) {
