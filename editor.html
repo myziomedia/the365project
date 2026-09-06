@@ -498,6 +498,12 @@
     updateStatus();
   }
 
+  function applyGridData(data) {
+    if (!data || !Array.isArray(data.photos)) throw new Error('Invalid published grid');
+    for (let i = 0; i < TOTAL; i++) photos[i] = data.photos[i] || null;
+    renderAll();
+  }
+
   function setPhoto(index, dataUrl) {
     photos[index] = dataUrl;
     renderCell(index);
@@ -764,6 +770,7 @@
 
       for (let i = 0; i < TOTAL; i++) photos[i] = data.photos[i] || null;
       renderAll();
+      applyGridData(data);
       await saveNow();
       setSaveState('Loaded published grid', 'saved');
     } catch (err) {
@@ -858,6 +865,9 @@
     grid.appendChild(cell);
   }
 
+  renderAll();
+  setSaveState('Opening editor...', 'saving');
+
   filePicker.addEventListener('change', async () => {
     const file = filePicker.files && filePicker.files[0];
     if (selectedIndex === null || !file) return;
@@ -934,6 +944,20 @@
       if (saved && Array.isArray(saved.photos)) {
         for (let i = 0; i < TOTAL; i++) photos[i] = saved.photos[i] || null;
         renderAll();
+        applyGridData(saved);
+        setSaveState('Saved locally', 'saved');
+      } else {
+        try {
+          setSaveState('Loading published grid...', 'saving');
+          const res = await fetch(`${DATA_PATH}?v=${Date.now()}`, { cache: 'no-store' });
+          if (!res.ok) throw new Error(`Could not load published grid (${res.status})`);
+          applyGridData(await res.json());
+          await dbPut(RECORD_KEY, payload());
+          setSaveState('Loaded published grid', 'saved');
+        } catch (err) {
+          console.error(err);
+          setSaveState('Saved locally', 'saved');
+        }
       }
 
       setSaveState('Saved locally', 'saved');
